@@ -2,7 +2,7 @@ import boto3
 import urllib
 from fastapi import UploadFile
 
-from app.core.config import settings
+from primary.core.config import settings
 
 
 s3_client = boto3.client(

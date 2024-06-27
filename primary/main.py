@@ -1,4 +1,3 @@
-import json
 import requests
 from contextlib import asynccontextmanager
 
@@ -10,18 +9,17 @@ from fastapi import (
     UploadFile, 
     status
 )
-from pydantic_core import ValidationError
-from openai import OpenAI
 
-from app.core.config import settings
-from app.models import (
+from primary.core.config import settings
+from primary.models import (
     UploadStatus,
     UpdateUploadStatus,
     Paper,
     PaperInference,
     PaperSummary
 )
-from app.utils import upload_file_to_s3
+from primary.predict import predict
+from primary.utils import upload_file_to_s3
 
 
 def load_model():
@@ -41,7 +39,10 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    title="I. Inference Server"
+)
 
 
 def update_status(status_data: UpdateUploadStatus) -> UploadStatus:
@@ -55,61 +56,10 @@ def update_status(status_data: UpdateUploadStatus) -> UploadStatus:
     return UploadStatus.model_validate(obj=res)
 
 
-def detect_bounding_box(file: UploadFile):
-    """
-    Detect bounding box with LayoutParser
-    """
-    pass
-
-
-def parse_metadata(detection) -> PaperInference:
-    """
-    Parse metadata with LayoutLMv3
-    """
-    return PaperInference(
-        id="default-inference-id",
-        abstract="Lorem ipsum ..."
-    )
-
-
-def extract_paper_summary(data: PaperInference) -> Paper:
-    """
-    Extract domain, problem, solution and keywords using OpenAI API
-    """
-    client = OpenAI()
-
-    prompt = """You are an assistant for writing academic papers. You are 
-    skilled at extracting research domain, problems of previous studies, 
-    solution to the problem in single sentence and keywords. Your answer must 
-    be in format of JSON {\"domain\": string, \"problem\": string, \"solution\"
-    : string, \"keywords\": [string]}."""
-    
-    completion = client.chat.completions.create(
-        model="gpt-3.5-turbo-0125",
-        response_format={ "type": "json_object" },
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": data.abstract}
-        ]
-    )
-    res = completion.choices[0].message.content
-    print(f"DEBUG:    OpenAI response {res}")
-
-    try:
-        summary = PaperSummary.model_validate(obj=json.loads(res))
-        paper_data = Paper.model_validate(
-            obj=(data.model_dump() | {"summary": summary}))
-        return paper_data
-    except ValidationError as e:
-        print(e)
-        return None
-
-
-def async_infernce(file: UploadFile, upload_status: UploadStatus):
-    ##### START INFERENCE #####
-    parsed_metadata = parse_metadata(None)
+async def async_infernce(file: UploadFile, upload_status: UploadStatus):
+    # Inference
+    paper_data = predict()
     print(f"INFO:     Contents parsed for request {upload_status.request_id}")
-    ###### END INFERENCE ######
 
     # Upload images to S3
     for img_file in []:
@@ -120,19 +70,7 @@ def async_infernce(file: UploadFile, upload_status: UploadStatus):
             images_uploaded=True
         )
     )
-    print(f"INFO:     Images uploaded for request {upload_status.request_id}")
-
-    # Extract summary using OpenAI API
-    paper_data = extract_paper_summary(parsed_metadata)
-    if not paper_data:
-        return
-    upload_status = update_status(
-        UpdateUploadStatus(
-            request_id=upload_status.request_id,
-            keywords_extracted=True
-        )
-    )
-    print(f"INFO:     Summary extracted for request {upload_status.request_id}")
+    # print(f"INFO:     Images uploaded for request {upload_status.request_id}")
 
     # Save to database
     paper = Paper.model_validate(obj=paper_data)
@@ -148,6 +86,14 @@ def async_infernce(file: UploadFile, upload_status: UploadStatus):
     )
     print(f"INFO:     Metadata stored for request {upload_status.request_id}")
 
+    # Pass files to secondary server
+    res = requests.post(
+        url=f"{settings.SECONDARY_INFERENCE_SERVER_URI}/summarize",
+        files=None
+    )
+    print(f"INFO:     Requesting summary for {upload_status.request_id}")
+    print(f"INFO:     {res.json()}")
+
 
 @app.post("/predict")
 def predict(
@@ -161,6 +107,8 @@ def predict(
     upload_status = UploadStatus.model_validate(obj=res)
 
     # Upload PDF file to S3
+    with open(file.filename, 'wb') as f:
+        f.write(file.file.read())
     url = upload_file_to_s3(file, "pdf")
     if not url:
         raise HTTPException(
