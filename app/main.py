@@ -93,6 +93,7 @@ def extract_paper_summary(data: PaperInference) -> Paper:
         ]
     )
     res = completion.choices[0].message.content
+    print(f"DEBUG:    OpenAI response {res}")
 
     try:
         summary = PaperSummary.model_validate(obj=json.loads(res))
