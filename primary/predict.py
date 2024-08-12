@@ -1,6 +1,0 @@
-
-
-
-
-def predict():
-    pass
