@@ -332,7 +332,7 @@ if __name__ == "__main__":
 
     # Read PDF files from directory
     for pdf_file in pdf_directory.glob('**/*.pdf'):
-        json_filename = pdf_file.with_suffix('json')
+        json_filename = pdf_file.with_suffix('.json').name
         json_path = result_directory / 'json' / json_filename
 
         # Create if not exists, else continue
