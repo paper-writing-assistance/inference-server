@@ -87,7 +87,9 @@ class DocumentProcessor:
             segment_image = np.asarray(image)[y1:y2, x1:x2]
             segment_image_pil = Image.fromarray(segment_image)
             ocr_agent = lp.TesseractAgent(languages='eng')
-            text = ocr_agent.detect(segment_image_pil) if block.type != "Figure" else f'{segment_image_pil}'
+            text = (ocr_agent.detect(segment_image_pil) 
+                    if block.type != "Figure" 
+                    else f'{segment_image_pil}')
             text = re.sub(r'[\x00-\x1F\x7F]', ' ', text)
             texts.append(text)
 
@@ -138,8 +140,14 @@ class DocumentProcessor:
         layout_result = self.parser_model.detect(img_np)
         logging.debug(f'self.layout_parser :: layout_result = {layout_result}')
     
-        layout_result = self.sort_layout_by_columns(layout_result, threshold=img_np.shape[1] // 2)
-        return {"bboxes": self.extract_bboxes(layout_result), "texts": self.ocr(img, layout_result), "width": img_np.shape[1], "height": img_np.shape[0]}
+        layout_result = self.sort_layout_by_columns(
+            layout_result, threshold=img_np.shape[1] // 2)
+        return {
+            "bboxes": self.extract_bboxes(layout_result), 
+            "texts": self.ocr(img, layout_result), 
+            "width": img_np.shape[1], 
+            "height": img_np.shape[0]
+        }
 
     def math_formula(self, img):
         bboxes = []
@@ -235,7 +243,19 @@ class DocumentProcessor:
         for page_number, page_output in enumerate(output):
             for id, category, bbox, text in page_output:
                 json_data["elements"].append({
-                    "bounding_box": [{"x": bbox[0], "y": bbox[1]}, {"x": bbox[2], "y": bbox[1]}, {"x": bbox[2], "y": bbox[3]}, {"x": bbox[0], "y": bbox[3]}],
+                    "bounding_box": [{
+                        "x": bbox[0], 
+                        "y": bbox[1]
+                    }, {
+                        "x": bbox[2], 
+                        "y": bbox[1]
+                    }, {
+                        "x": bbox[2], 
+                        "y": bbox[3]
+                    }, {
+                        "x": bbox[0], 
+                        "y": bbox[3]
+                    }],
                     "category": category,
                     "id": id,
                     "page": page_number + 1,
@@ -290,7 +310,9 @@ class DocumentProcessor:
             predictions = outputs.logits.argmax(-1).squeeze().tolist()
             token_boxes = encoding.bbox.squeeze().tolist()
             is_subword = np.array(offset_mapping.squeeze().tolist())[:, 0] != 0
-            true_predictions = [self.id2label[pred] for idx, pred in enumerate(predictions) if not is_subword[idx]]
+            true_predictions = [self.id2label[pred] 
+                                for idx, pred in enumerate(predictions) 
+                                if not is_subword[idx]]
             true_boxes = [self.unnormalize_box(box, width, height) for idx, box in enumerate(token_boxes) if not is_subword[idx]]
             final_output = [(category, bbox) for category, bbox in zip(true_predictions, true_boxes) if bbox != [0, 0, 0, 0]]
 
@@ -308,7 +330,7 @@ class DocumentProcessor:
 # Run module
 if __name__ == "__main__":
 
-    # Parse arguments
+    # Parse argumets
     parser = argparse.ArgumentParser(description='Layout Parser for LayoutLMv3')
     parser.add_argument('-p', '--pdf_path', type=str, default='/root/paper_pdf/eess', help='Path to the PDF Directory')
     parser.add_argument('-m', '--model_path', type=str, required=True, help='Path to the Model Directory')
