@@ -16,7 +16,14 @@ from utils import remove_overlapping_bboxes
 
 class DocumentProcessor:
 
-    def __init__(self, pdf_path: Path, model_path: Path, result_path: Path, visualize=False, save_result=False):
+    def __init__(
+            self, 
+            pdf_path: Path, 
+            model_path: Path, 
+            result_path: Path, 
+            visualize: bool = False, 
+            save_result: bool = False
+        ):
         self.pdf_path = pdf_path
         self.model_path = model_path
         self.result_path = result_path
@@ -340,7 +347,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     pdf_directory = Path(args.pdf_path)
-    model_path = args.model_path
+    model_path = Path(args.model_path)
     result_directory = Path(args.result_path)
     debug = args.debug
     visualize = args.visualize
