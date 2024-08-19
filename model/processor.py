@@ -54,8 +54,8 @@ class DocumentProcessor:
 
         # Models
         self.parser_model = lp.Detectron2LayoutModel(
-            self.parser_config_path,
-            self.parser_model_path,
+            config_path=self.parser_config_path,
+            model_path=self.parser_model_path,
             extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.5], 
             label_map={
                 0: "Text", 
@@ -339,7 +339,7 @@ class DocumentProcessor:
                 final_true_predictions.extend(batch_true_predictions)
                 final_true_boxes.extend(batch_true_boxes)
             
-            final_output = [(category, bbox) for category, bbox in zip(true_predictions, true_boxes) if bbox != [0, 0, 0, 0]]
+            final_output = [(category, bbox) for category, bbox in zip(final_true_predictions, final_true_boxes) if bbox != [0, 0, 0, 0]]
 
             bboxes = self.math_formula(img)
             if bboxes:
@@ -364,7 +364,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Layout Parser for LayoutLMv3')
     parser.add_argument('-pdf', '--pdf_path', type=str, default='/root/paper_pdf/eess', help='Path to the PDF Directory')
     parser.add_argument('-p', '--parser_model_path', type=str, required=True, help='Path to Parser Model Directory')
-    parser.add_argumetn('-c', '--parser_config_path', type=str, required=True, help='Path to Parser Config Directory')
+    parser.add_argument('-c', '--parser_config_path', type=str, required=True, help='Path to Parser Config Directory')
     parser.add_argument('-l', '--lm_model_path', type=str, required=True, help='Path to the LMv3 Model Directory')
     parser.add_argument('-r', '--result_path', type=str, default='/root/result/eess', help='Path to the Result Directory')
     parser.add_argument('-d', '--debug', action='store_true', help='Debug Mode: Process only 1 PDF files')
@@ -394,7 +394,7 @@ if __name__ == "__main__":
         # Create if not exists, else continue
         if json_path.exists():
             logging.warning(f'{json_filename} JSON already exists')
-            continue
+            # continue
         
         # Process files
         processor = DocumentProcessor(
