@@ -57,13 +57,20 @@ class DocumentProcessor:
             config_path=self.parser_config_path,
             model_path=self.parser_model_path,
             extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.5], 
-            label_map={
-                0: "Text", 
-                1: "Title", 
-                2: "List", 
-                3: "Table", 
-                4: "Figure"
-            })
+            label_map = {
+                0: "Caption",
+                1: "Footnote",
+                2: "Formula",
+                3: "List-item",
+                4: "Page-footer",
+                5: "Page-header",
+                6: "Picture",
+                7: "Section-header",
+                8: "Table",
+                9: "Text",
+                10: "Title"
+                }
+            )
         self.lm_model = AutoModelForTokenClassification.from_pretrained(
             lm_model_path)
         self.processor = AutoProcessor.from_pretrained(
