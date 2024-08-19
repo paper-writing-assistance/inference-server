@@ -11,21 +11,25 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 from transformers import AutoModelForTokenClassification, AutoProcessor
 
-from utils import remove_overlapping_bboxes
+from utils import *
 
 
 class DocumentProcessor:
 
     def __init__(
             self, 
-            pdf_path: Path, 
-            model_path: Path, 
+            pdf_path: Path,
+            parser_model_path: Path, 
+            parser_config_path: Path, 
+            lm_model_path: Path, 
             result_path: Path, 
             visualize: bool = False, 
             save_result: bool = False
         ):
         self.pdf_path = pdf_path
-        self.model_path = model_path
+        self.parser_model_path = parser_model_path
+        self.parser_config_path = parser_config_path
+        self.lm_model_path = lm_model_path
         self.result_path = result_path
         self.visualize = visualize
         self.pdf_id = pdf_path.stem
@@ -50,7 +54,8 @@ class DocumentProcessor:
 
         # Models
         self.parser_model = lp.Detectron2LayoutModel(
-            config_path='lp://PubLayNet/mask_rcnn_X_101_32x8d_FPN_3x/config', 
+            self.parser_config_path,
+            self.parser_model_path,
             extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.5], 
             label_map={
                 0: "Text", 
@@ -60,7 +65,7 @@ class DocumentProcessor:
                 4: "Figure"
             })
         self.lm_model = AutoModelForTokenClassification.from_pretrained(
-            model_path)
+            lm_model_path)
         self.processor = AutoProcessor.from_pretrained(
             "microsoft/layoutlmv3-base", apply_ocr=False)
         self.formula_model = lp.Detectron2LayoutModel(
@@ -205,20 +210,19 @@ class DocumentProcessor:
         img_np = np.array(img)  # PIL 이미지를 NumPy 배열로 변환
         img_height, img_width = img_np.shape[:2]  # 이미지 크기 가져오기
 
-        category_colors = {
-            "Text": (0, 255, 0), 
-            "Title": (255, 0, 0), 
-            "List": (0, 0, 255), 
-            "Table": (255, 255, 0),
-            "Figure": (255, 0, 255), 
-            "Caption": (0, 255, 255), 
-            "Footnote": (128, 0, 128),
-            "Formula": (128, 128, 0), 
-            "Page-footer": (0, 128, 128), 
-            "Page-header": (128, 0, 0),
-            "Section-header": (0, 128, 0), 
-            "Equation": (255, 165, 0)  # Orange
-        }
+        category_colors = {"Caption": (0, 255, 255),         # Cyan
+                            "Footnote": (128, 0, 128),        # Purple
+                            "Formula": (128, 128, 0),         # Olive
+                            "List-item": (0, 0, 255),         # Blue 
+                            "Page-footer": (0, 128, 128),     # Dark Cyan
+                            "Page-header": (128, 0, 0),       # Dark Red
+                            "Picture": (255, 0, 255),         # Magenta 
+                            "Section-header": (0, 128, 0),    # Dark Green
+                            "Table": (255, 255, 0),           # Yellow
+                            "Text": (0, 255, 0),              # Green
+                            "Title": (255, 0, 0),             # Red
+                            "Equation": (255, 165, 0)         # Orange 
+                        }
 
         # PIL 이미지 객체 생성
         image = Image.fromarray(img_np)
@@ -305,27 +309,46 @@ class DocumentProcessor:
             width, height = output["width"], output["height"]
 
             logging.debug(f'Calling `self.processor` on {self.pdf_id}, page {page_number + 1}')
-            encoding = self.processor(
-                img, words, boxes=boxes, return_offsets_mapping=True, 
-                return_tensors="pt", truncation=True, padding="max_length")
-            offset_mapping = encoding.pop('offset_mapping')
+
+            final_true_predictions = []
+            final_true_boxes = []
+
+            # 배치 단위로 words와 boxes를 나눔
+            batch_size = 15
+            for i in range(0, len(words), batch_size):
+                batch_words = words[i:i + batch_size]
+                batch_boxes = boxes[i:i + batch_size]
             
-            logging.debug(f'Predicting on {self.pdf_id}, page {page_number + 1}')
-            self.lm_model.to(device)
-            encoding.to(device)
-            outputs = self.lm_model(**encoding)
-            predictions = outputs.logits.argmax(-1).squeeze().tolist()
-            token_boxes = encoding.bbox.squeeze().tolist()
-            is_subword = np.array(offset_mapping.squeeze().tolist())[:, 0] != 0
-            true_predictions = [self.id2label[pred] 
-                                for idx, pred in enumerate(predictions) 
-                                if not is_subword[idx]]
-            true_boxes = [self.unnormalize_box(box, width, height) for idx, box in enumerate(token_boxes) if not is_subword[idx]]
+                encoding = self.processor(
+                    img, words, boxes=boxes, return_offsets_mapping=True, 
+                    return_tensors="pt", truncation=True, padding="max_length")
+                offset_mapping = encoding.pop('offset_mapping')
+            
+                logging.debug(f'Predicting on {self.pdf_id}, page {page_number + 1}, {i+1} batch')
+                self.lm_model.to(device)
+                encoding.to(device)
+                outputs = self.lm_model(**encoding)
+                predictions = outputs.logits.argmax(-1).squeeze().tolist()
+                token_boxes = encoding.bbox.squeeze().tolist()
+                is_subword = np.array(offset_mapping.squeeze().tolist())[:, 0] != 0
+                batch_true_predictions = [self.id2label[pred] 
+                                    for idx, pred in enumerate(predictions) 
+                                    if not is_subword[idx]]
+                batch_true_boxes = [self.unnormalize_box(box, width, height) for idx, box in enumerate(token_boxes) if not is_subword[idx]]
+
+                final_true_predictions.extend(batch_true_predictions)
+                final_true_boxes.extend(batch_true_boxes)
+            
             final_output = [(category, bbox) for category, bbox in zip(true_predictions, true_boxes) if bbox != [0, 0, 0, 0]]
 
             bboxes = self.math_formula(img)
             if bboxes:
                 final_output += [("Equation", box) for box in bboxes]
+
+            final_output = formula_and_equation(final_output)
+            final_output = post_process_bbox(final_output)
+            final_output = sort_layout_by_columns(final_output, threshold=width // 2)
+            final_output = final_remove_overlapping_bboxes(final_output, threshold=0.6)
 
             if self.visualize:
                 self.visualize_image(img, final_output, page_number + 1)
@@ -339,15 +362,19 @@ if __name__ == "__main__":
 
     # Parse argumets
     parser = argparse.ArgumentParser(description='Layout Parser for LayoutLMv3')
-    parser.add_argument('-p', '--pdf_path', type=str, default='/root/paper_pdf/eess', help='Path to the PDF Directory')
-    parser.add_argument('-m', '--model_path', type=str, required=True, help='Path to the Model Directory')
+    parser.add_argument('-pdf', '--pdf_path', type=str, default='/root/paper_pdf/eess', help='Path to the PDF Directory')
+    parser.add_argument('-p', '--parser_model_path', type=str, required=True, help='Path to Parser Model Directory')
+    parser.add_argumetn('-c', '--parser_config_path', type=str, required=True, help='Path to Parser Config Directory')
+    parser.add_argument('-l', '--lm_model_path', type=str, required=True, help='Path to the LMv3 Model Directory')
     parser.add_argument('-r', '--result_path', type=str, default='/root/result/eess', help='Path to the Result Directory')
     parser.add_argument('-d', '--debug', action='store_true', help='Debug Mode: Process only 1 PDF files')
     parser.add_argument('-v', '--visualize', action='store_true', help='Visualize Mode: Visualize the result of detection')
     args = parser.parse_args()
     
     pdf_directory = Path(args.pdf_path)
-    model_path = Path(args.model_path)
+    parser_model_path = Path(args.parser_model_path)
+    parser_config_path = Path(args.parser_config_path)
+    lm_model_path = Path(args.lm_model_path)
     result_directory = Path(args.result_path)
     debug = args.debug
     visualize = args.visualize
@@ -371,7 +398,7 @@ if __name__ == "__main__":
         
         # Process files
         processor = DocumentProcessor(
-            pdf_file, model_path, result_directory, visualize, save_result=True)
+            pdf_file, parser_model_path, parser_config_path, lm_model_path, result_directory, visualize, save_result=True)
         result = processor.process()
         logging.info(f'Processed output: result = {result}')
 
